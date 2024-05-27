@@ -108,4 +108,3 @@ if st.session_state.messages[-1]["role"] != "assistant":
                 st.error(f"Error generating TTS audio: {e}")
             
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-

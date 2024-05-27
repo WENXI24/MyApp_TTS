@@ -2,7 +2,7 @@ import streamlit as st
 import replicate
 import os
 import torch
-from transformers import pipeline
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
 
 # App title
 st.set_page_config(page_title="🦙💬 Llama 2 Chatbot with TTS")
@@ -44,11 +44,16 @@ st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
 # Initialize TTS pipeline
 @st.cache(allow_output_mutation=True)
 def load_tts_pipeline():
-    return pipeline("text-to-speech", model="facebook/fastspeech2-en-ljspeech")
+    try:
+        tts = pipeline("text-to-speech", model="facebook/fastspeech2-en-ljspeech")
+        return tts
+    except Exception as e:
+        st.error(f"Error loading TTS model: {e}")
+        return None
 
 tts_pipeline = load_tts_pipeline()
 
-# Function for generating LLaMA2 response. Refactored from https://github.com/a16z-infra/llama2-chatbot
+# Function for generating LLaMA2 response
 def generate_llama2_response(prompt_input):
     string_dialogue = "You are a helpful assistant. You do not respond as 'User' or pretend to be 'User'. You only respond once as 'Assistant'."
     for dict_message in st.session_state.messages:
@@ -87,8 +92,12 @@ if st.session_state.messages[-1]["role"] != "assistant":
             placeholder.markdown(full_response)
             
             # Generate TTS audio
-            tts_audio = tts_pipeline(full_response)
-            audio_bytes = tts_audio["audio"]["array"].tobytes()
-            st.audio(audio_bytes, format="audio/wav")
+            if tts_pipeline:
+                try:
+                    tts_audio = tts_pipeline(full_response)
+                    audio_bytes = tts_audio["audio"]["array"].tobytes()
+                    st.audio(audio_bytes, format="audio/wav")
+                except Exception as e:
+                    st.error(f"Error generating TTS audio: {e}")
             
             st.session_state.messages.append({"role": "assistant", "content": full_response})

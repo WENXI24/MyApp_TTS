@@ -2,7 +2,8 @@ import streamlit as st
 import replicate
 import os
 import torch
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+from TTS.tts.configs.xtts_config import XttsConfig
+from TTS.tts.models.xtts import Xtts
 
 # App title
 st.set_page_config(page_title="🦙💬 Llama 2 Chatbot with TTS")
@@ -41,17 +42,17 @@ def clear_chat_history():
     st.session_state.messages = [{"role": "assistant", "content": "How may I assist you today?"}]
 st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
 
-# Initialize TTS pipeline
+# Initialize TTS model
 @st.cache(allow_output_mutation=True)
-def load_tts_pipeline():
-    try:
-        tts = pipeline("text-to-speech", model="facebook/fastspeech2-en-ljspeech")
-        return tts
-    except Exception as e:
-        st.error(f"Error loading TTS model: {e}")
-        return None
+def load_tts_model():
+    config = XttsConfig()
+    config.load_json("/path/to/xtts/config.json")
+    model = Xtts.init_from_config(config)
+    model.load_checkpoint(config, checkpoint_dir="/path/to/xtts/", eval=True)
+    model.cuda()
+    return model, config
 
-tts_pipeline = load_tts_pipeline()
+tts_model, tts_config = load_tts_model()
 
 # Function for generating LLaMA2 response
 def generate_llama2_response(prompt_input):
@@ -92,12 +93,19 @@ if st.session_state.messages[-1]["role"] != "assistant":
             placeholder.markdown(full_response)
             
             # Generate TTS audio
-            if tts_pipeline:
-                try:
-                    tts_audio = tts_pipeline(full_response)
-                    audio_bytes = tts_audio["audio"]["array"].tobytes()
-                    st.audio(audio_bytes, format="audio/wav")
-                except Exception as e:
-                    st.error(f"Error generating TTS audio: {e}")
+            try:
+                outputs = tts_model.synthesize(
+                    full_response,
+                    tts_config,
+                    speaker_wav="/path/to/speaker.wav",  # Update this path as needed
+                    gpt_cond_len=3,
+                    language="en",
+                )
+                audio_path = outputs[0]
+                audio_bytes = open(audio_path, "rb").read()
+                st.audio(audio_bytes, format="audio/wav")
+            except Exception as e:
+                st.error(f"Error generating TTS audio: {e}")
             
             st.session_state.messages.append({"role": "assistant", "content": full_response})
+

@@ -6,7 +6,7 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import torchaudio
 
 # Load Suno/Bark TTS model
-model_name = "sunoo/bark"
+model_name = "suno/bark"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 

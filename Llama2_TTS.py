@@ -2,11 +2,36 @@ import streamlit as st
 import replicate
 import os
 import torch
-from TTS.tts.configs.xtts_config import XttsConfig
-from TTS.tts.models.xtts import Xtts
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+import torchaudio
 
+# Load Suno/Bark TTS model
+model_name = "sunoo/bark"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+
+# Function to generate LLaMA2 response and speak
+def generate_and_speak_response(prompt_input):
+    response = generate_llama2_response(prompt_input)
+    full_response = '\n'.join(response)
+    st.write(full_response)
+    waveform, sample_rate = text_to_speech(full_response)
+    st.audio(waveform, format="wav")
+
+# Trigger TTS when a new response is generated
+if st.session_state.messages[-1]["role"] != "assistant":
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response = generate_llama2_response(prompt)
+            full_response = '\n'.join(response)
+            st.write(full_response)
+            waveform, sample_rate = text_to_speech(full_response)
+            st.audio(waveform, format="wav")
+    message = {"role": "assistant", "content": full_response}
+    st.session_state.messages.append(message)
+    
 # App title
-st.set_page_config(page_title="🦙💬 Llama 2 Chatbot with TTS")
+st.set_page_config(page_title="🦙💬 Llama 2 Audio Chatbot")
 
 # Replicate Credentials
 with st.sidebar:
@@ -16,21 +41,30 @@ with st.sidebar:
         replicate_api = st.secrets['REPLICATE_API_TOKEN']
     else:
         replicate_api = st.text_input('Enter Replicate API token:', type='password')
-        if not (replicate_api.startswith('r8_') and len(replicate_api) == 40):
+        if not (replicate_api.startswith('r8_') and len(replicate_api)==40):
             st.warning('Please enter your credentials!', icon='⚠️')
         else:
             st.success('Proceed to entering your prompt message!', icon='👉')
-    os.environ['REPLICATE_API_TOKEN'] = replicate_api
 
+    # Refactored from https://github.com/a16z-infra/llama2-chatbot
     st.subheader('Models and parameters')
-    selected_model = st.selectbox('Choose a Llama2 model', ['Llama2-7B', 'Llama2-13B'], key='selected_model')
-    temperature = st.slider('Temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01)
-    top_p = st.slider('Top_p', min_value=0.01, max_value=1.0, value=0.9, step=0.01)
-    max_length = st.slider('Max_length', min_value=32, max_value=128, value=120, step=8)
+    selected_model = st.sidebar.selectbox('Choose a Llama2 model', ['Llama2-7B', 'Llama2-13B', 'Llama2-70B'], key='selected_model')
+    if selected_model == 'Llama2-7B':
+        llm = 'a16z-infra/llama7b-v2-chat:4f0a4744c7295c024a1de15e1a63c880d3da035fa1f49bfd344fe076074c8eea'
+    elif selected_model == 'Llama2-13B':
+        llm = 'a16z-infra/llama13b-v2-chat:df7690f1994d94e96ad9d568eac121aecf50684a0b0963b25a41cc40061269e5'
+    else:
+        llm = 'replicate/llama70b-v2-chat:e951f18578850b652510200860fc4ea62b3b16fac280f83ff32282f87bbd2e48'
+    
+    temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01)
+    top_p = st.sidebar.slider('top_p', min_value=0.01, max_value=1.0, value=0.9, step=0.01)
+    max_length = st.sidebar.slider('max_length', min_value=64, max_value=4096, value=512, step=8)
+    
     st.markdown('📖 Learn how to build this app in this [blog](https://blog.streamlit.io/how-to-build-a-llama-2-chatbot/)!')
+os.environ['REPLICATE_API_TOKEN'] = replicate_api
 
 # Store LLM generated responses
-if "messages" not in st.session_state:
+if "messages" not in st.session_state.keys():
     st.session_state.messages = [{"role": "assistant", "content": "How may I assist you today?"}]
 
 # Display or clear chat messages
@@ -42,18 +76,6 @@ def clear_chat_history():
     st.session_state.messages = [{"role": "assistant", "content": "How may I assist you today?"}]
 st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
 
-# Initialize TTS model
-@st.cache(allow_output_mutation=True)
-def load_tts_model():
-    config = XttsConfig()
-    config.load_json("/path/to/xtts/config.json")
-    model = Xtts.init_from_config(config)
-    model.load_checkpoint(config, checkpoint_dir="/path/to/xtts/", eval=True)
-    model.cuda()
-    return model, config
-
-tts_model, tts_config = load_tts_model()
-
 # Function for generating LLaMA2 response
 def generate_llama2_response(prompt_input):
     string_dialogue = "You are a helpful assistant. You do not respond as 'User' or pretend to be 'User'. You only respond once as 'Assistant'."
@@ -62,19 +84,9 @@ def generate_llama2_response(prompt_input):
             string_dialogue += "User: " + dict_message["content"] + "\n\n"
         else:
             string_dialogue += "Assistant: " + dict_message["content"] + "\n\n"
-    
-    model_version = 'a16z-infra/llama7b-v2-chat:4f0a4744c7295c024a1de15e1a63c880d3da035fa1f49bfd344fe076074c8eea' if selected_model == 'Llama2-7B' else 'a16z-infra/llama13b-v2-chat:df7690f1994d94e96ad9d568eac121aecf50684a0b0963b25a41cc40061269e5'
-    
-    output = replicate.run(
-        model_version,
-        input={
-            "prompt": f"{string_dialogue} {prompt_input} Assistant: ",
-            "temperature": temperature,
-            "top_p": top_p,
-            "max_length": max_length,
-            "repetition_penalty": 1.0
-        }
-    )
+    output = replicate.run(llm, 
+                           input={"prompt": f"{string_dialogue} {prompt_input} Assistant: ",
+                                  "temperature":temperature, "top_p":top_p, "max_length":max_length, "repetition_penalty":1})
     return output
 
 # User-provided prompt
@@ -89,22 +101,11 @@ if st.session_state.messages[-1]["role"] != "assistant":
         with st.spinner("Thinking..."):
             response = generate_llama2_response(prompt)
             placeholder = st.empty()
-            full_response = ''.join(response)
+            full_response = ''
+            for item in response:
+                full_response += item
+                placeholder.markdown(full_response)
             placeholder.markdown(full_response)
-            
-            # Generate TTS audio
-            try:
-                outputs = tts_model.synthesize(
-                    full_response,
-                    tts_config,
-                    speaker_wav="/path/to/speaker.wav",  # Update this path as needed
-                    gpt_cond_len=3,
-                    language="en",
-                )
-                audio_path = outputs[0]
-                audio_bytes = open(audio_path, "rb").read()
-                st.audio(audio_bytes, format="audio/wav")
-            except Exception as e:
-                st.error(f"Error generating TTS audio: {e}")
-            
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
+    message = {"role": "assistant", "content": full_response}
+    st.session_state.messages.append(message)
+   

@@ -1,6 +1,6 @@
-streamlit
-transformers
-torch
-torchaudio
-replicate
-TTS
+streamlit==1.9.0
+replicate==0.1.9
+torch==2.0.0
+TTS==0.10.1  # Compatible with Python 3.9 and 3.10
+transformers==4.28.1
+torchaudio==2.0.1
